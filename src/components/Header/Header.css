@@ -1,0 +1,22 @@
+.header {
+  text-align: center;
+  padding: 24px 16px 8px;
+  width: 100%;
+  max-width: 500px;
+}
+
+.header__title {
+  font-family: var(--font);
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0 0 4px;
+}
+
+.header__location {
+  font-family: var(--font);
+  font-size: 1rem;
+  font-weight: 400;
+  color: var(--color-text-secondary);
+  margin: 0;
+}

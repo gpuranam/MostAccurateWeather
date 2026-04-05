@@ -1,0 +1,109 @@
+.current-weather {
+  background: var(--color-card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 32px 28px;
+  width: 100%;
+  max-width: 500px;
+  margin: 16px auto 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.current-weather__main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 24px;
+}
+
+.current-weather__temperature {
+  font-size: 3.5rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--color-text-primary);
+  margin: 8px 0 0;
+}
+
+.current-weather__condition {
+  font-size: 1.1rem;
+  color: var(--color-text-secondary);
+  margin: 4px 0;
+}
+
+.current-weather__feels-like {
+  font-size: 0.95rem;
+  color: var(--color-text-secondary);
+}
+
+.current-weather__details {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  width: 100%;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 20px;
+  margin-bottom: 20px;
+}
+
+.current-weather__detail {
+  text-align: center;
+}
+
+.current-weather__detail-label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-secondary);
+  margin-bottom: 4px;
+}
+
+.current-weather__detail-value {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.current-weather__footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  justify-content: center;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 16px;
+}
+
+.current-weather__updated {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+}
+
+.current-weather__refresh {
+  background: none;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 0.8rem;
+  color: var(--color-accent);
+  cursor: pointer;
+  font-family: var(--font);
+  transition: background 0.2s;
+}
+
+.current-weather__refresh:hover {
+  background: #f7fafc;
+}
+
+@media (max-width: 480px) {
+  .current-weather {
+    padding: 24px 20px;
+    max-width: 100%;
+  }
+
+  .current-weather__temperature {
+    font-size: 3rem;
+  }
+}
