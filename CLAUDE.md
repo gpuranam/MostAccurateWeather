@@ -91,6 +91,9 @@ Order the shortlist by these tiebreakers, top-to-bottom:
 
 ## Step-by-step procedure
 
+### 0. Network-policy precheck (cheap, fail-fast)
+Before running any searches, sanity-check that this environment can actually reach the listing sites. Run `curl -s -o /dev/null -w "%{http_code}" https://www.cars.com/ --max-time 8`. If it returns a `403` with body `"Host not in allowlist"`, **stop immediately** — the environment's outbound network policy is too restrictive for this task. Write today's draft as `drafts/YYYY-MM-DD.md` with a single section explaining the user must widen the environment's network policy at https://code.claude.com (allow listing-site domains or switch to Permissive), then commit and exit. Do not waste a session fetching dozens of URLs that will all 403.
+
 ### 1. Load prior state
 - Read `state/seen-vins.json`. Hold its contents as `seen_vins` in memory.
 - Compute today's date as `YYYY-MM-DD` (US Eastern time).
