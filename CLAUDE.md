@@ -105,7 +105,16 @@ Order the shortlist by these tiebreakers, top-to-bottom:
 - Collect unique listing URLs.
 
 ### 3. Extract per-listing data
-For each candidate URL, `WebFetch` it and extract:
+
+**IMPORTANT — fetch strategy:** Every major used-car listing site (Cars.com, CarGurus, Autotrader, Carvana, Carfax, AutoNation, Edmunds, plus most franchised dealer sites running on DealerInspire / Dealer.com) returns HTTP 403 to `WebFetch` because of Cloudflare/Akamai bot protection. **Use the Playwright MCP server's browser tools instead** for all listing-site URLs:
+- `mcp__playwright__browser_navigate` to open the URL
+- `mcp__playwright__browser_snapshot` to read the rendered DOM as accessibility tree
+- `mcp__playwright__browser_evaluate` to pull structured data (JSON-LD blocks, dataLayer, hidden VIN fields)
+- `mcp__playwright__browser_close` between unrelated listings to keep memory bounded
+
+Fall back to `WebFetch` only for plain HTML pages that aren't bot-walled (some independent dealer sites, blog/news sources). Search engine result snippets are last-resort signal — never trust them as authoritative on price/mileage/drivetrain.
+
+For each candidate URL, navigate + snapshot it and extract:
 
 - Year, trim (SV/SL/Platinum/Reserve), drivetrain (must be 4WD)
 - Mileage, asking price
