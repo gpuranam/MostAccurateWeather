@@ -1,0 +1,81 @@
+# India trip fare agent configuration. Edit freely; every run re-reads this file.
+
+trip_name: "DC -> Pune, Dec 2026 / Jan 2027"
+currency: USD
+cabin: economy            # economy | premium_economy | business | first
+
+# Ticket A: you + son, round trip. Origins are searched separately; EWR adds a
+# positioning cost/time (Amtrak to Newark Airport station or IAD-EWR hop).
+ticket_a:
+  label: "You + son"
+  passengers: {adults: 2, children: 0}   # set children:1 + child_age if son < 12 (child fares)
+  origins: [IAD, EWR]
+  destination: PNQ
+  outbound: {preferred: 2026-12-11, flex_days: 2}
+  return:   {preferred: 2027-01-05, flex_days: 2}
+
+# Ticket B: wife, open-jaw. Outbound to Mumbai ~1 week later; return must be the
+# SAME flights as Ticket A's return (PNQ -> ... -> A's origin).
+ticket_b:
+  label: "Wife"
+  passengers: {adults: 1, children: 0}
+  origin: IAD
+  destination: BOM
+  outbound: {preferred: 2026-12-18, flex_days: 2}
+  return_matches_ticket_a: true
+
+positioning:            # applied when Ticket A starts/ends at EWR instead of IAD
+  EWR:
+    cost_usd: 450       # Amtrak x2 people both ways (~$250) + 1 hotel night (~$200)
+    extra_hours: 6      # per direction, door to door, versus flying from IAD
+
+# ---- Hard airspace rule ----------------------------------------------------
+airspace:
+  excluded_countries: [Iran, Iraq, Syria, Lebanon, Israel, Palestine, Jordan,
+    Saudi Arabia, Yemen, Oman, United Arab Emirates, Qatar, Bahrain, Kuwait, Egypt]
+  excluded_sea_zones: true     # Persian Gulf, Gulf of Oman, Red Sea, Gulf of Aden
+  border_buffer_km: 20         # warn (not reject) when a track passes this close to excluded land
+  allowed_note: "Turkey, Caucasus, Central Asia, Afghanistan, Pakistan allowed"
+  tracks_per_flight: 3         # most recent completed flights inspected per flight number
+  lookback_days: 10
+  cache_ttl_hours: 72
+  # Connection airports that are never acceptable (Gulf / Levant hubs).
+  banned_connection_airports: [DXB, DWC, DOH, AUH, SHJ, BAH, KWI, MCT, RUH, JED,
+    DMM, MED, AMM, CAI, BEY, TLV, BGW, EBL, IKA, THR, BSR, NJF]
+  # Segments entirely between these airports are never route-checked.
+  domestic_airports:
+    US: [IAD, DCA, BWI, EWR, JFK, LGA, ORD, SFO, LAX, SEA, ATL, DFW, IAH, BOS, PHL, CLT, DTW, MSP, DEN]
+    IN: [DEL, BOM, PNQ, BLR, HYD, MAA, CCU, AMD, GOI, GOX, COK, NAG, IDR, JAI]
+
+# ---- Ranking -------------------------------------------------------------------
+scoring:
+  value_of_time_usd_per_traveler_hour: 30
+  date_penalty_usd_per_day_off: 150
+  extra_connection_penalty_usd: 120      # per connection beyond the route minimum
+  min_connection_minutes:
+    international_to_domestic: 180       # e.g. DEL arrival -> domestic PNQ (immigration, recheck)
+    default: 75
+  tight_connection_penalty_usd: 400
+  overnight_layover_penalty_usd: 150
+  separate_tickets_penalty_usd: 500      # unprotected self-transfer
+  basic_economy_penalty_usd: 300         # can't change -> can't reprice on drops
+  unverified_route_penalty_usd: 600      # no track data yet; never top-5 while compliant exists
+  top_n: 10
+
+alerts:
+  price_drop_usd_total: 150     # same plan cheaper than last run by this much
+  new_best_plan: true
+  fail_on_route_violation_of_best: true
+
+search:
+  provider: serpapi             # serpapi | fixtures
+  max_queries_per_run: {full: 45, light: 12}
+  outbound_candidates_for_returns: 3   # per (origin, date) query, how many outbounds to expand
+  hl: en
+  gl: us
+
+# After booking, fill this in. The agent switches to watching your booked plan.
+booked: null
+# booked:
+#   ticket_a: {pnr: "XXXXXX", paid_usd: 0, flights_out: [UA2133, UA82, AI861], flights_back: [AI862, UA83, UA2134]}
+#   ticket_b: {pnr: "YYYYYY", paid_usd: 0, flights_out: [...], flights_back: [...]}
