@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Run the India trip fare agent end to end.
 
-  python run.py --mode full      # date grid (~45 searches)
-  python run.py --mode light     # preferred dates only (~12 searches)
-  python run.py --fixtures DIR   # offline, recorded SerpApi responses
-  python run.py --no-routes      # skip FlightAware verification (all unverified)
+  python run.py --mode light     # preferred dates only (~3 page searches)
+  python run.py --mode full      # + one rotating alternate date pair (~5 page searches)
+  python run.py --no-routes      # skip route verification (all unverified)
+
+Default sources are free: Google Flights pages (gflights.py) and FlightAware
+public track pages (fa_public.py). The SerpApi/AeroAPI paths remain available
+via trip.yaml (search.provider: serpapi, airspace.track_source: aeroapi).
 
 Writes report.md (email-ready), latest.json, and appends history.json.
 The first line of report.md is the suggested email subject.
@@ -18,9 +21,12 @@ from pathlib import Path
 
 import yaml
 
+import fa_public
+import gflights
 import rank
 import routes
-from search import SerpApiClient, TicketItin, search_ticket_a, search_ticket_b
+import search as serp
+from search import TicketItin
 
 HERE = Path(__file__).parent
 HISTORY = HERE / "history.json"
@@ -33,24 +39,29 @@ def fmt_leg(opt) -> str:
     return f"{segs}  | {opt.total_minutes // 60}h{opt.total_minutes % 60:02d}" + (f" | layovers: {lays}" if lays else "")
 
 
-def verify_options(options, cfg, cache, limit_calls: int, enabled: bool) -> dict:
-    """Verify the long-haul flights used by the given options (in priority order)."""
+def verify_options(options, cfg, cache, limit: int, enabled: bool) -> dict:
+    """Verify long-haul flights used by the given options (priority order). Returns status info."""
     if not enabled:
-        return {k: v for k, v in cache.items()}
-    done = 0
+        return {"checked": 0}
+    wanted = []
     for opt in options:
-        for s in opt.segments:
-            if not routes.needs_check(s, cfg):
+        for sg in opt.segments:
+            if routes.needs_check(sg, cfg) and (sg.flight, sg.origin, sg.dest) not in wanted:
+                wanted.append((sg.flight, sg.origin, sg.dest))
+    if cfg["airspace"].get("track_source", "flightaware_public") == "aeroapi":
+        n = 0
+        for f, o, d in wanted:
+            if n >= limit:
+                break
+            hit = cache.get(f"{f}:{o}-{d}")
+            if hit and hit.get("status") != "unverified" and (dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(
+                    hit["checked_at"])).total_seconds() < cfg["airspace"]["cache_ttl_hours"] * 3600:
                 continue
-            key = f"{s.flight}:{s.origin}-{s.dest}"
-            fresh = key in cache and cache[key].get("status") != "unverified" and \
-                (dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(cache[key]["checked_at"])
-                 ).total_seconds() < cfg["airspace"]["cache_ttl_hours"] * 3600
-            if fresh or done >= limit_calls:
-                continue
-            routes.verify_flight(s.flight, s.origin, s.dest, cfg, cache)
-            done += 1
-    return cache
+            before = cache.get(f"{f}:{o}-{d}", {}).get("checked_at")
+            routes.verify_flight(f, o, d, cfg, cache)
+            n += cache[f"{f}:{o}-{d}"]["checked_at"] != before
+        return {"checked": n}
+    return fa_public.verify_batch(wanted, cfg, cache, max_flights=limit)
 
 
 def load_history() -> dict:
@@ -65,44 +76,75 @@ def main(argv=None) -> int:
     ap.add_argument("--config", default=str(HERE / "trip.yaml"))
     ap.add_argument("--fixtures", default=None)
     ap.add_argument("--no-routes", action="store_true")
-    ap.add_argument("--max-route-checks", type=int, default=12)
+    ap.add_argument("--max-route-checks", type=int, default=4)
     ap.add_argument("--out", default=str(HERE / "report.md"))
     args = ap.parse_args(argv)
 
     cfg = yaml.safe_load(Path(args.config).read_text())
     now = dt.datetime.now(dt.timezone.utc)
-    client = SerpApiClient(budget=cfg["search"]["max_queries_per_run"][args.mode],
-                           hl=cfg["search"]["hl"], gl=cfg["search"]["gl"], currency=cfg["currency"],
-                           fixtures_dir=Path(args.fixtures) if args.fixtures else None)
     cache = routes.load_cache()
+    hist = load_history()
+    provider = cfg["search"].get("provider", "gflights")
+    budget = cfg["search"]["max_queries_per_run"][args.mode]
+    route_notes = []
 
-    # 1) Ticket A (you + son). Reserve ~40% of the budget for Ticket B.
-    a_budget = int(client.budget * 0.6)
-    full_budget, client.budget = client.budget, a_budget
-    a_list = search_ticket_a(cfg, client, args.mode)
-    client.budget = full_budget
+    if provider == "gflights":
+        client = gflights.GFlightsClient(budget=budget)
+        rotation = sum(1 for r in hist["runs"] if r.get("mode") == "full")
+        a_list = gflights.search_ticket_a(cfg, client, args.mode, cache, rotation)
+    else:
+        client = serp.SerpApiClient(budget=budget, hl=cfg["search"]["hl"], gl=cfg["search"]["gl"],
+                                    currency=cfg["currency"],
+                                    fixtures_dir=Path(args.fixtures) if args.fixtures else None)
+        full_budget, client.budget = client.budget, int(budget * 0.6)   # reserve ~40% for Ticket B
+        a_list = serp.search_ticket_a(cfg, client, args.mode)
+        client.budget = full_budget
 
     # 2) Pre-rank A with current knowledge, verify flights of the best candidates.
     pre = sorted(a_list, key=lambda t: rank.score_ticket(t, cfg, cache)["score"])
-    verify_options([o for t in pre[:12] for o in (t.out, t.back)], cfg, cache,
-                   args.max_route_checks, not args.no_routes)
+    r = verify_options([o for t in pre[:12] for o in (t.out, t.back)], cfg, cache,
+                       args.max_route_checks, not args.no_routes)
+    if r.get("blocked"):
+        route_notes.append("FlightAware rate-limited route checks this run; remaining flights stay unverified")
     scored_a = sorted(((t, rank.score_ticket(t, cfg, cache)) for t in a_list),
                       key=lambda x: (rank.ORDER[x[1]["status"]], x[1]["score"]))
     a_returns = []
-    for t, s in scored_a:
-        if s["status"] == "violates":
+    for t, sc in scored_a:
+        if sc["status"] == "violates":
             continue
-        tgt = (t.back_date, t.back.segments[-1].dest, t.back.flights)
-        if tgt not in a_returns:
+        back = t.back
+        dom, lay = None, 0
+        if back.separate_tickets and len(back.segments) > 1:      # split plan: domestic first
+            dom = gflights.Option(segments=[back.segments[0]], layovers=[], total_minutes=back.segments[0].minutes,
+                                  price=None)
+            lay = back.layovers[0]["minutes"] if back.layovers else 0
+            intl = back.segments[1:]
+        else:
+            intl = back.segments
+        tgt = {"date": t.back_date, "flights": back.flights, "intl_from": intl[0].origin,
+               "intl_to": intl[-1].dest, "intl_date": intl[0].dep[:10], "intl_flights": [x.flight for x in intl],
+               "dom": dom, "dom_layover": lay}
+        if dom is not None:
+            dom.price = None
+        if tgt["flights"] not in [x["flights"] for x in a_returns]:
             a_returns.append(tgt)
         if len(a_returns) >= 4:
             break
 
     # 3) Ticket B (wife), open jaw matched to A's best returns.
-    b_list = search_ticket_b(cfg, client, args.mode, a_returns) if a_returns else []
+    if not a_returns:
+        b_list = []
+    elif provider == "gflights":
+        b_list = gflights.search_ticket_b(cfg, client, args.mode, cache, a_returns)
+    else:
+        b_list = serp.search_ticket_b(cfg, client, args.mode,
+                                      [(x["date"], x["intl_to"], x["flights"]) for x in a_returns])
     pre_b = sorted(b_list, key=lambda t: rank.score_ticket(t, cfg, cache)["score"])
-    verify_options([t.out for t in pre_b[:8]], cfg, cache, max(4, args.max_route_checks // 2),
-                   not args.no_routes)
+    if not r.get("blocked"):
+        r2 = verify_options([t.out for t in pre_b[:6]], cfg, cache, max(2, args.max_route_checks // 2),
+                            not args.no_routes)
+        if r2.get("blocked"):
+            route_notes.append("FlightAware rate-limited route checks this run")
     routes.save_cache(cache)
 
     # 4) Combine and rank.
@@ -110,14 +152,13 @@ def main(argv=None) -> int:
     plans = res["plans"][: cfg["scoring"]["top_n"]]
 
     # 5) History + alerts.
-    hist = load_history()
     last = hist["runs"][-1] if hist["runs"] else None
     alerts = []
     best = plans[0] if plans else None
     if best:
         sig = rank.plan_signature(best)
         prev = hist["plans"].get(sig, [])
-        if last and cfg["alerts"]["new_best_plan"] and last.get("best_sig") != sig:
+        if last and last.get("best_sig") and cfg["alerts"]["new_best_plan"] and last.get("best_sig") != sig:
             alerts.append(f"New top plan (was ${last.get('best_fare')}): now ${best['total_fare']}")
         if prev and prev[-1]["fare"] - best["total_fare"] >= cfg["alerts"]["price_drop_usd_total"]:
             alerts.append(f"Price drop on top plan: ${prev[-1]['fare']} → ${best['total_fare']}")
@@ -141,11 +182,12 @@ def main(argv=None) -> int:
     if any(l.startswith("DROP") for l in booked_lines):
         alerts.append("Booked fare dropped — consider rebooking for credit")
 
+    client.errors = list(dict.fromkeys(client.errors + route_notes))
     report = render(cfg, plans, res["rejected"], cache, alerts, client, args.mode, now, booked_lines)
     Path(args.out).write_text(report)
     (HERE / "latest.json").write_text(json.dumps({
         "generated": now.isoformat(), "alerts": alerts, "queries": client.used,
-        "errors": client.errors,
+        "errors": client.errors, "search_log": getattr(client, "log", []),
         "plans": [{"rank": i + 1, "status": p["status"], "total_fare": p["total_fare"], "score": p["score"],
                    "a": {"origin": p["a"].origin, "out": p["a"].out.flights, "out_date": p["a"].out_date,
                          "back": p["a"].back.flights, "back_date": p["a"].back_date, "fare": p["a"].price},
@@ -181,7 +223,11 @@ def booked_watch(cfg, a_list: list[TicketItin], b_list: list[TicketItin]) -> lis
 def render(cfg, plans, rejected, cache, alerts, client, mode, now, booked_lines) -> str:
     subj = ("ALERT: " + alerts[0] if alerts else
             (f"India trip: best compliant plan ${plans[0]['total_fare']:,.0f}" if plans else "India trip: no plans found"))
-    L = [subj, "", f"_Run {now:%Y-%m-%d %H:%M} UTC · mode {mode} · {client.used} fare searches_", ""]
+    if not plans and getattr(client, "blocked", False):
+        subj = "India trip: fare source rate-limited this run (no new prices)"
+    L = [subj, "", f"_Run {now:%Y-%m-%d %H:%M} UTC · mode {mode} · {client.used} fare searches_", "",
+         "_Prices are Google Flights quotes for the whole ticket (all travelers on it). "
+         "Confirm on the airline site before paying._", ""]
     if alerts:
         L += ["## Alerts", *[f"- {a}" for a in alerts], ""]
     if booked_lines:

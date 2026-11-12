@@ -127,6 +127,12 @@ def verdicts_now():
 
 
 def test_end_to_end_ranking(monkeypatch, tmp_path):
+    cfg = yaml.safe_load((ROOT / "trip.yaml").read_text())
+    cfg["search"]["provider"] = "serpapi"
+    cfg["search"]["max_queries_per_run"] = {"full": 45, "light": 12}
+    cfg["airspace"]["track_source"] = "aeroapi"
+    cfg_path = tmp_path / "trip.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg))
     monkeypatch.setattr(search.SerpApiClient, "query", fake_query)
     monkeypatch.setattr(run.routes, "load_cache", verdicts_now)
     monkeypatch.setattr(run.routes, "save_cache", lambda c: None)
@@ -134,7 +140,7 @@ def test_end_to_end_ranking(monkeypatch, tmp_path):
     monkeypatch.setattr(run, "HISTORY", tmp_path / "history.json")
     monkeypatch.setattr(run, "HERE", tmp_path)
     out = tmp_path / "report.md"
-    assert run.main(["--mode", "light", "--out", str(out), "--config", str(ROOT / "trip.yaml")]) == 0
+    assert run.main(["--mode", "light", "--out", str(out), "--config", str(cfg_path)]) == 0
     latest = json.loads((tmp_path / "latest.json").read_text())
     top = latest["plans"][0]
     # Emirates (DXB) and Air India (violates) never rank; United via EWR wins.
@@ -162,3 +168,74 @@ def test_tight_international_to_domestic_connection_penalised():
     opt = search.Option([s1, s2], [{"airport": "DEL", "minutes": 95, "overnight": False}], 1080, 1000)
     pen, notes = rank.connection_issues(opt, CFG)
     assert pen > 0 and "tight" in notes[0]
+
+
+# ---------------------------------------------------------------------------
+# Free providers, offline (real payloads captured 2026-11-12)
+FIX = ROOT / "tests" / "fixtures"
+
+
+def test_gflights_parses_real_round_trip_payload():
+    import gflights
+    opts = gflights.parse_body((FIX / "gf_rt_iad_pnq_stage1.txt").read_text())
+    assert len(opts) >= 6
+    cheapest = min(opts, key=lambda o: o.price)
+    assert cheapest.price == 6888
+    assert cheapest.flights == ["AF51", "AF226", "6E5276"]
+    assert [l["airport"] for l in cheapest.layovers] == ["CDG", "DEL"]
+    assert cheapest.segments[0].origin == "IAD" and cheapest.segments[-1].dest == "PNQ"
+    assert cheapest.segments[0].dep.startswith("2026-12-11")
+    assert any("also sold as" in e for s in cheapest.segments for e in s.extensions)
+
+
+def test_gflights_url_roundtrip_and_multicity():
+    import gflights
+    c = gflights.GFlightsClient(budget=1)
+    u = c.url([("IAD", "PNQ", "2026-12-11"), ("PNQ", "IAD", "2027-01-05")], "round-trip", {"adults": 2}, 2)
+    assert u.startswith("https://www.google.com/travel/flights/search?tfs=") and "curr=USD" in u
+    m = c.url([("IAD", "BOM", "2026-12-18"), ("PNQ", "EWR", "2027-01-05")], "multi-city", {"adults": 1}, 2)
+    assert m != u
+
+
+def test_real_ua82_track_classifies_compliant():
+    import fa_public
+    t = json.loads((FIX / "ua82_track_20261111.json").read_text())
+    v = fa_public.classify("UA82", "EWR", "DEL", {"tracks": [t]}, CFG, dt.datetime.now(dt.timezone.utc))
+    assert v["status"] == "compliant", v
+    assert "Azerbaijan" in v["tracks"][0]["countries"] and "Pakistan" in v["tracks"][0]["countries"]
+
+
+def test_gflights_choose_prefers_verified_routing():
+    import gflights
+    mk = lambda fn, price, carrier: search.Option(
+        [search.Segment(carrier, fn, "EWR", "DEL", "2026-12-11 20:35", "2026-12-12 21:50", 885)], [], 885, price)
+    opts = [mk("AI106", 900, "Air India"), mk("LH403", 1000, "Lufthansa"), mk("XX1", 1100, "X"),
+            mk("UA82", 1500, "United")]
+    v = verdicts_now()
+    picks = gflights._choose(CFG, v, 3)(opts)
+    flights = [p.flights[0] for p in picks]
+    assert "AI106" not in flights          # known violator never expanded
+    assert "UA82" in flights               # verified routing always expanded
+
+
+def test_attach_domestic_enforces_self_transfer_buffer(monkeypatch):
+    import gflights
+    seg = lambda fn, a, b, dep, arr, m: search.Segment("X", fn, a, b, dep, arr, m)
+    intl_out = search.Option([seg("UA82", "EWR", "DEL", "2026-12-11 20:35", "2026-12-12 21:50", 885)], [], 885, 5947)
+    intl_back = search.Option([seg("UA83", "DEL", "EWR", "2027-01-05 23:55", "2027-01-06 05:30", 960)], [], 960, 5947)
+    doms = {
+        ("DEL", "PNQ"): [search.Option([seg("6E2618", "DEL", "PNQ", "2026-12-12 22:55", "2026-12-13 01:10", 135)], [], 135, 151),
+                         search.Option([seg("6E2343", "DEL", "PNQ", "2026-12-13 02:15", "2026-12-13 04:25", 130)], [], 130, 151)],
+        ("PNQ", "DEL"): [search.Option([seg("6E2285", "PNQ", "DEL", "2027-01-05 14:25", "2027-01-05 16:35", 130)], [], 130, 159),
+                         search.Option([seg("6E9999", "PNQ", "DEL", "2027-01-05 20:00", "2027-01-05 22:10", 130)], [], 130, 159)],
+    }
+    monkeypatch.setattr(gflights, "domestic_options",
+                        lambda a, b, d, pax, errs: [o for o in doms[(a, b)] if o.segments[0].dep[:10] == d])
+    # 02:15 is 265 min after a 21:50 landing: too tight for a 270-min self-transfer...
+    assert gflights.attach_domestic(intl_out, "DEL", "PNQ", {"adults": 2}, 270, True, []) is None
+    # ...but fine at 240; 22:55 (65 min) is always rejected.
+    out = gflights.attach_domestic(intl_out, "DEL", "PNQ", {"adults": 2}, 240, True, [])
+    assert out.flights == ["UA82", "6E2343"] and out.separate_tickets
+    assert out.layovers[-1]["minutes"] == 265 and out.price == 151
+    back = gflights.attach_domestic(intl_back, "PNQ", "DEL", {"adults": 2}, 270, False, [])
+    assert back.flights == ["6E2285", "UA83"]          # 22:10 arrival leaves < 270 min before 23:55

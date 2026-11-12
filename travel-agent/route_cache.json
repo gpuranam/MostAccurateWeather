@@ -1,0 +1,42 @@
+{
+ "AF215:DEL-CDG": {
+  "checked_at": "2026-11-12T13:18:08.340905+00:00",
+  "dest": "CDG",
+  "flight": "AF215",
+  "origin": "DEL",
+  "reason": "rate limited",
+  "source": "flightaware-public",
+  "status": "unverified",
+  "tracks": []
+ },
+ "AF226:CDG-DEL": {
+  "checked_at": "2026-11-12T13:18:08.340905+00:00",
+  "dest": "DEL",
+  "flight": "AF226",
+  "origin": "CDG",
+  "reason": "no completed CDG-DEL flights listed",
+  "source": "flightaware-public",
+  "status": "unverified",
+  "tracks": []
+ },
+ "LH761:DEL-FRA": {
+  "checked_at": "2026-11-12T13:18:08.340905+00:00",
+  "dest": "FRA",
+  "flight": "LH761",
+  "origin": "DEL",
+  "reason": "skipped: rate limited",
+  "source": "flightaware-public",
+  "status": "unverified",
+  "tracks": []
+ },
+ "LH762:MUC-DEL": {
+  "checked_at": "2026-11-12T13:18:08.340905+00:00",
+  "dest": "DEL",
+  "flight": "LH762",
+  "origin": "MUC",
+  "reason": "skipped: rate limited",
+  "source": "flightaware-public",
+  "status": "unverified",
+  "tracks": []
+ }
+}

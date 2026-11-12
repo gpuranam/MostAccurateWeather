@@ -120,8 +120,13 @@ def verify_flight(flight: str, origin: str, dest: str, cfg: dict, cache: dict,
 
 
 def needs_check(seg, cfg: dict) -> bool:
+    """Only international segments with an end in South Asia can cross the region.
+
+    Transatlantic / intra-Europe / domestic legs (IAD-CDG, FRA-IAD, DEL-PNQ) are skipped.
+    """
     dom = cfg["airspace"]["domestic_airports"]
     for airports in dom.values():
         if seg.origin in airports and seg.dest in airports:
             return False
-    return True
+    region = set(cfg["airspace"].get("check_airports") or dom.get("IN", []))
+    return seg.origin in region or seg.dest in region

@@ -36,7 +36,8 @@ airspace:
   excluded_sea_zones: true     # Persian Gulf, Gulf of Oman, Red Sea, Gulf of Aden
   border_buffer_km: 20         # warn (not reject) when a track passes this close to excluded land
   allowed_note: "Turkey, Caucasus, Central Asia, Afghanistan, Pakistan allowed"
-  tracks_per_flight: 3         # most recent completed flights inspected per flight number
+  track_source: flightaware_public   # flightaware_public (free) | aeroapi (paid key)
+  tracks_per_flight: 3         # (aeroapi only) recent flights inspected per flight number
   lookback_days: 10
   cache_ttl_hours: 72
   # Connection airports that are never acceptable (Gulf / Levant hubs).
@@ -54,10 +55,11 @@ scoring:
   extra_connection_penalty_usd: 120      # per connection beyond the route minimum
   min_connection_minutes:
     international_to_domestic: 180       # e.g. DEL arrival -> domestic PNQ (immigration, recheck)
+    self_transfer: 270                   # separate tickets: immigration + bags + re-check-in
     default: 75
   tight_connection_penalty_usd: 400
   overnight_layover_penalty_usd: 150
-  separate_tickets_penalty_usd: 500      # unprotected self-transfer
+  separate_tickets_penalty_usd: 200      # per direction; unprotected self-transfer (buffer enforced above)
   basic_economy_penalty_usd: 300         # can't change -> can't reprice on drops
   unverified_route_penalty_usd: 600      # no track data yet; never top-5 while compliant exists
   top_n: 10
@@ -68,9 +70,14 @@ alerts:
   fail_on_route_violation_of_best: true
 
 search:
-  provider: serpapi             # serpapi | fixtures
-  max_queries_per_run: {full: 45, light: 12}
-  outbound_candidates_for_returns: 3   # per (origin, date) query, how many outbounds to expand
+  provider: gflights            # gflights (free, Google Flights pages) | serpapi (paid API)
+  # gflights: page searches per run (each = 1 page load + up to 3 result clicks).
+  # Google rate-limits shared cloud IPs at ~20 searches / 30 min, so stay small.
+  max_queries_per_run: {full: 8, light: 5}
+  outbound_candidates_for_returns: 3   # outbound options expanded to see their returns
+  # Also search origin<->hub round trips + separate domestic tickets (how the United
+  # EWR-DEL nonstop shows up; Google doesn't combine it with Delhi-Pune on one ticket).
+  split_hubs: [DEL]
   hl: en
   gl: us
 
