@@ -38,5 +38,44 @@
   "source": "flightaware-public",
   "status": "unverified",
   "tracks": []
+ },
+ "UA82:EWR-DEL": {
+  "checked_at": "2026-11-12T12:50:00+00:00",
+  "dest": "DEL",
+  "flight": "UA82",
+  "origin": "EWR",
+  "pattern": "0145Z/KEWR/VIDP",
+  "reason": "track 20261111 clean",
+  "source": "flightaware-public",
+  "status": "compliant",
+  "tracks": [
+   {
+    "countries": [
+     "United States of America",
+     "Canada",
+     "Ireland",
+     "United Kingdom",
+     "Belgium",
+     "Germany",
+     "Czechia",
+     "Austria",
+     "Slovakia",
+     "Hungary",
+     "Romania",
+     "Georgia",
+     "Azerbaijan",
+     "Turkmenistan",
+     "Uzbekistan",
+     "Tajikistan",
+     "Afghanistan",
+     "Pakistan",
+     "India"
+    ],
+    "date": "20261111",
+    "operator": "United",
+    "violations": {},
+    "warnings": {}
+   }
+  ]
  }
 }
